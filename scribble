@@ -48,7 +48,7 @@ class Window(QtWidgets.QMainWindow):
         self.erasing = False
         self.buttons = 0
 
-        self.last_mouse_release_coords = width // 2, height // 2
+        self.last_mouse_release_coords = 0, 0
 
         self.show()
 
@@ -58,11 +58,15 @@ class Window(QtWidgets.QMainWindow):
             app.exit()
         super().keyPressEvent(event)
 
-        if not self.text or self.last_mouse_release_coords != self.text[-1][0]:
-            self.text.append((self.last_mouse_release_coords, event.text()))
+        text = event.text()
+        if text == '\b' and self.text:
+            pos, prev = self.text[-1]
+            self.text[-1] = pos, prev[:-1]
+        elif not self.text or self.last_mouse_release_coords != self.text[-1][0]:
+            self.text.append((self.last_mouse_release_coords, text))
         else:
             pos, prev = self.text[-1]
-            self.text[-1] = pos, prev + event.text()
+            self.text[-1] = pos, prev + text
         self.update()
 
     def paintEvent(self, _event):
