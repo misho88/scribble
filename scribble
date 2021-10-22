@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+
+from argparse import ArgumentParser
+parser = ArgumentParser()
+parser.add_argument('words', nargs='*')
+parser.add_argument('--font', '-f', default='sans', help='font hint')
+parser.add_argument('--size', '-s', default=20, type=int, help='font size')
+parser.add_argument('--color', '-c', default='red', help='font color')
+parser.add_argument('--geometry', '-g', nargs=2, type=int, help='window width and height')
+parser.add_argument('--line', '-l', default=2, type=int, help='line width')
+args = parser.parse_args()
+
+from Xlib import display  # noqa: E402
+from PyQt5 import QtCore, QtWidgets, QtGui  # noqa: E402
+from PyQt5.QtCore import Qt  # noqa: E402
+
+pointer = display.Display().screen().root.query_pointer()
+
+FLAGS = Qt.WindowStaysOnTopHint | Qt.SplashScreen | Qt.FramelessWindowHint
+ORIGIN = QtCore.QPointF(0, 0)
+
+
+class Window(QtWidgets.QMainWindow):
+    def __init__(self, text: str):
+        super().__init__()
+        self.setWindowFlags(FLAGS)
+        self.setMouseTracking(True)
+        self.setWindowTitle(text)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+
+        self.setFont(QtGui.QFont(args.font, args.size))
+
+        if args.geometry:
+            width, height = args.geometry
+        else:
+            metrics = self.fontMetrics()
+            width, height = metrics.horizontalAdvance(text), metrics.height()
+        width = max(50, width)
+        height = max(50, height)
+        self.setGeometry(pointer.root_x - width // 2, pointer.root_y - height // 2, width, height)
+
+        self.pen = QtGui.QPen(QtGui.QColor(args.color), args.line, Qt.SolidLine)
+
+        self.path = []
+        self.text = [ ((0, 0), text) ]
+
+        self.drawing = False
+        self.erasing = False
+        self.buttons = 0
+
+        self.last_mouse_release_coords = width // 2, height // 2
+
+        self.show()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.close()
+            app.exit()
+        super().keyPressEvent(event)
+
+        if not self.text or self.last_mouse_release_coords != self.text[-1][0]:
+            self.text.append((self.last_mouse_release_coords, event.text()))
+        else:
+            pos, prev = self.text[-1]
+            self.text[-1] = pos, prev + event.text()
+        self.update()
+
+    def paintEvent(self, _event):
+        painter = QtGui.QPainter(self)
+        painter.setRenderHints(QtGui.QPainter.Antialiasing)
+
+        painter.setPen(self.pen)
+
+        for (x, y), text in self.text:
+            metrics = self.fontMetrics()
+            w, h = metrics.horizontalAdvance(text), metrics.height()
+            painter.drawText(QtCore.QRect(x, y, w, h), 0, text)
+
+        path = QtGui.QPainterPath()
+        action = path.moveTo
+        for point in self.path:
+            if point is None:
+                action = path.moveTo
+            else:
+                action(*point)
+                action = path.lineTo
+        painter.drawPath(path)
+
+    def mousePressEvent(self, event):
+        self.buttons = event.buttons()
+        if self.buttons & Qt.MiddleButton:
+            app.exit()
+        if self.buttons & Qt.LeftButton:
+            self.path.append((event.x(), event.y()))
+            self.drawing = True
+        if self.buttons & Qt.RightButton:
+            self.erasing = True
+
+    def mouseReleaseEvent(self, event):
+        self.last_mouse_release_coords = ex, ey = event.x(), event.y()
+        buttons = event.buttons() ^ self.buttons
+        if buttons & Qt.LeftButton:
+            self.path.append(None)
+            self.drawing = False
+        if self.buttons & Qt.RightButton:
+            self.erasing = False
+            i = 0
+            while i < len(self.path):
+                try:
+                    j = self.path.index(None, i)
+                except ValueError:
+                    break
+                for k in range(j + 1, len(self.path)):
+                    if self.path[k] is not None:
+                        break
+                else:
+                    k = len(self.path)
+                self.path[j:k] = [None]
+                i += 1
+
+            i = 0
+            while i < len(self.text):
+                (x, y), text = self.text[i]
+                metrics = self.fontMetrics()
+                w, h = metrics.horizontalAdvance(text), metrics.height()
+                if x <= ex <= x + w and y <= ey <= y + h:
+                    self.text.pop(i)
+                else:
+                    i += 1
+        self.update()
+
+
+    def mouseMoveEvent(self, event):
+        x, y = event.x(), event.y()
+        if self.drawing:
+            self.path.append((x, y))
+        if self.erasing:
+            r = 20
+            path = QtGui.QPainterPath()
+            path.addEllipse(x - r, y - r, 2 * r, 2 * r)
+            for i in range(len(self.path)):
+                node = self.path[i]
+                if node is not None and path.contains(QtCore.QPointF(*node)):
+                    self.path[i] = None
+        self.update()
+
+
+app = QtWidgets.QApplication([])
+window = Window(' '.join(args.words))
+exit(app.exec())
