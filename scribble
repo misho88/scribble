@@ -9,15 +9,27 @@ parser.add_argument('--font', '-f', default='sans', help='font hint')
 parser.add_argument('--size', '-s', default=20, type=int, help='font size')
 parser.add_argument('--color', '-c', default='BlueViolet', help='font color')
 parser.add_argument('--geometry', '-g', nargs=2, type=int, help='window width and height')
-parser.add_argument('--line', '-l', default=2, type=int, help='line width')
+parser.add_argument('--line', '-l', default=2, type=float, help='line width')
 args = parser.parse_args(argv[1:])
 
 from Xlib import display  # noqa: E402
 from PyQt5 import QtCore, QtWidgets, QtGui  # noqa: E402
 from PyQt5.QtCore import Qt  # noqa: E402
+from pathlib import Path  # noqa: E402
 
 root = display.Display().screen().root
 pointer = root.query_pointer()
+
+
+def find_file(name):
+    for prefix in '.', '/usr/share/scribble', '/usr/local/share/scribble':
+        path = Path(prefix) / name
+        if path.is_file():
+            return str(path)
+
+
+pencil_pixmap_path = find_file('pencil.png')
+eraser_pixmap_path = find_file('eraser.png')
 
 
 def get_frame(client):
@@ -28,7 +40,7 @@ def get_frame(client):
 active = display.Display().get_input_focus().focus
 geometry = get_frame(active).get_geometry()
 
-FLAGS = Qt.WindowStaysOnTopHint | Qt.SplashScreen | Qt.FramelessWindowHint
+FLAGS = Qt.WindowStaysOnTopHint | Qt.SplashScreen | Qt.FramelessWindowHint  # type: ignore
 ORIGIN = QtCore.QPointF(0, 0)
 
 
@@ -38,7 +50,7 @@ class Window(QtWidgets.QMainWindow):
         self.setWindowFlags(FLAGS)
         self.setMouseTracking(True)
         self.setWindowTitle(text)
-        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
 
         self.setFont(QtGui.QFont(args.font, args.size))
 
@@ -66,10 +78,39 @@ class Window(QtWidgets.QMainWindow):
 
         self.last_mouse_release_coords = 0, 0
 
+        self.setTabletTracking(True)
+
+        self.pressure = 0.0
+
+        self.pencilCursor = Qt.CursorShape.ArrowCursor if pencil_pixmap_path is None else QtGui.QCursor(QtGui.QPixmap(pencil_pixmap_path).scaledToHeight(32), 0, 0)
+        self.eraserCursor = Qt.CursorShape.ArrowCursor if eraser_pixmap_path is None else QtGui.QCursor(QtGui.QPixmap(eraser_pixmap_path).scaledToHeight(32), 0, 0)
+
         self.show()
 
+    def tabletEvent(self, event):
+        pointer = event.pointerType()
+        pressure = event.pressure()
+
+        pen = QtGui.QTabletEvent.PointerType.Pen
+        eraser = QtGui.QTabletEvent.PointerType.Eraser
+
+        if pressure < 0.01 and self.pressure >= 0.1:
+            action = self.finishDrawing if pointer == pen else self.finishErasing if pointer == eraser else None
+        elif pressure >= 0.01 and self.pressure < 0.1:
+            action = self.startDrawing if pointer == pen else self.startErasing if pointer == eraser else None
+        else:
+            action = None
+
+        self.pressure = pressure
+
+        if action is None:
+            return
+
+        x, y = event.x(), event.y()
+        action(x, y)
+
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape:
+        if event.key() == Qt.Key.Key_Escape:
             self.close()
             app.exit()
         super().keyPressEvent(event)
@@ -109,47 +150,62 @@ class Window(QtWidgets.QMainWindow):
 
     def mousePressEvent(self, event):
         self.buttons = event.buttons()
-        if self.buttons & Qt.MiddleButton:
+        if self.buttons & Qt.MouseButton.MiddleButton:
             app.exit()
-        if self.buttons & Qt.LeftButton:
-            self.path.append((event.x(), event.y()))
-            self.drawing = True
-        if self.buttons & Qt.RightButton:
-            self.erasing = True
+        if self.buttons & Qt.MouseButton.LeftButton:
+            self.startDrawing(event.x(), event.y())
+        if self.buttons & Qt.MouseButton.RightButton:
+            self.startErasing(event.x(), event.y())
 
     def mouseReleaseEvent(self, event):
-        self.last_mouse_release_coords = ex, ey = event.x(), event.y()
+        self.last_mouse_release_coords = x, y = event.x(), event.y()
         buttons = event.buttons() ^ self.buttons
-        if buttons & Qt.LeftButton:
-            self.path.append(None)
-            self.drawing = False
-        if self.buttons & Qt.RightButton:
-            self.erasing = False
-            i = 0
-            while i < len(self.path):
-                try:
-                    j = self.path.index(None, i)
-                except ValueError:
-                    break
-                for k in range(j + 1, len(self.path)):
-                    if self.path[k] is not None:
-                        break
-                else:
-                    k = len(self.path)
-                self.path[j:k] = [None]
-                i += 1
-
-            i = 0
-            while i < len(self.text):
-                (x, y), text = self.text[i]
-                metrics = self.fontMetrics()
-                w, h = metrics.horizontalAdvance(text), metrics.height()
-                if x <= ex <= x + w and y <= ey <= y + h:
-                    self.text.pop(i)
-                else:
-                    i += 1
+        if buttons & Qt.MouseButton.LeftButton:
+            self.finishDrawing(x, y)
+        if self.buttons & Qt.MouseButton.RightButton:
+            self.finishErasing(x, y)
         self.update()
 
+    def startDrawing(self, x, y):
+        self.setCursor(self.pencilCursor)
+        self.path.append((x, y))
+        self.drawing = True
+
+    def startErasing(self, x, y):
+        self.setCursor(self.eraserCursor)
+        self.erasing = True
+
+    def finishDrawing(self, x, y):
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+        self.path.append(None)
+        self.drawing = False
+
+    def finishErasing(self, x, y):
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+        self.erasing = False
+        i = 0
+        while i < len(self.path):
+            try:
+                j = self.path.index(None, i)
+            except ValueError:
+                break
+            for k in range(j + 1, len(self.path)):
+                if self.path[k] is not None:
+                    break
+            else:
+                k = len(self.path)
+            self.path[j:k] = [None]
+            i += 1
+
+        i = 0
+        while i < len(self.text):
+            (tx, ty), text = self.text[i]
+            metrics = self.fontMetrics()
+            w, h = metrics.horizontalAdvance(text), metrics.height()
+            if tx <= x <= tx + w and ty <= y <= ty + h:
+                self.text.pop(i)
+            else:
+                i += 1
 
     def mouseMoveEvent(self, event):
         x, y = event.x(), event.y()
