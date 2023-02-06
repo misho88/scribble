@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 from argparse import ArgumentParser
+from sys import argv
+
 parser = ArgumentParser()
 parser.add_argument('words', nargs='*')
 parser.add_argument('--font', '-f', default='sans', help='font hint')
@@ -8,7 +10,7 @@ parser.add_argument('--size', '-s', default=20, type=int, help='font size')
 parser.add_argument('--color', '-c', default='red', help='font color')
 parser.add_argument('--geometry', '-g', nargs=2, type=int, help='window width and height')
 parser.add_argument('--line', '-l', default=2, type=int, help='line width')
-args = parser.parse_args()
+args = parser.parse_args(argv[1:])
 
 from Xlib import display  # noqa: E402
 from PyQt5 import QtCore, QtWidgets, QtGui  # noqa: E402
@@ -149,6 +151,6 @@ class Window(QtWidgets.QMainWindow):
         self.update()
 
 
-app = QtWidgets.QApplication([])
+app = QtWidgets.QApplication(argv)
 window = Window(' '.join(args.words))
 exit(app.exec())
