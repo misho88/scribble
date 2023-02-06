@@ -7,7 +7,7 @@ parser = ArgumentParser()
 parser.add_argument('words', nargs='*')
 parser.add_argument('--font', '-f', default='sans', help='font hint')
 parser.add_argument('--size', '-s', default=20, type=int, help='font size')
-parser.add_argument('--color', '-c', default='red', help='font color')
+parser.add_argument('--color', '-c', default='BlueViolet', help='font color')
 parser.add_argument('--geometry', '-g', nargs=2, type=int, help='window width and height')
 parser.add_argument('--line', '-l', default=2, type=int, help='line width')
 args = parser.parse_args(argv[1:])
@@ -16,7 +16,17 @@ from Xlib import display  # noqa: E402
 from PyQt5 import QtCore, QtWidgets, QtGui  # noqa: E402
 from PyQt5.QtCore import Qt  # noqa: E402
 
-pointer = display.Display().screen().root.query_pointer()
+root = display.Display().screen().root
+pointer = root.query_pointer()
+
+
+def get_frame(client):
+    parent = client.query_tree().parent
+    return client if parent.id == root.id else get_frame(parent)
+
+
+active = display.Display().get_input_focus().focus
+geometry = get_frame(active).get_geometry()
 
 FLAGS = Qt.WindowStaysOnTopHint | Qt.SplashScreen | Qt.FramelessWindowHint
 ORIGIN = QtCore.QPointF(0, 0)
@@ -34,14 +44,18 @@ class Window(QtWidgets.QMainWindow):
 
         if args.geometry:
             width, height = args.geometry
+            width = max(50, width)
+            height = max(50, height)
+            self.setGeometry(pointer.root_x - width // 2, pointer.root_y - height // 2, width, height)
         else:
-            metrics = self.fontMetrics()
-            width, height = metrics.horizontalAdvance(text), metrics.height()
-        width = max(50, width)
-        height = max(50, height)
-        self.setGeometry(pointer.root_x - width // 2, pointer.root_y - height // 2, width, height)
+            self.setGeometry(geometry.x, geometry.y, geometry.width, geometry.height)
+            #metrics = self.fontMetrics()
+            #width, height = metrics.horizontalAdvance(text), metrics.height()
 
-        self.pen = QtGui.QPen(QtGui.QColor(args.color), args.line, Qt.SolidLine)
+        self.pen = QtGui.QPen(QtGui.QColor(args.color), args.line, Qt.PenStyle.SolidLine)
+        brushColor = QtGui.QColor(args.color)
+        brushColor.setAlpha(95)
+        self.brush = QtGui.QBrush(brushColor, Qt.BrushStyle.Dense7Pattern)
 
         self.path = []
         self.text = [ ((0, 0), text) ]
@@ -74,6 +88,7 @@ class Window(QtWidgets.QMainWindow):
     def paintEvent(self, _event):
         painter = QtGui.QPainter(self)
         painter.setRenderHints(QtGui.QPainter.Antialiasing)
+        painter.fillRect(0, 0, self.width(), self.height(), self.brush)
 
         painter.setPen(self.pen)
 
