@@ -12,12 +12,14 @@ parser.add_argument('--geometry', '-g', nargs=2, type=int, help='window width an
 parser.add_argument('--line', '-l', default=2, type=float, help='line width')
 args = parser.parse_args(argv[1:])
 
-from Xlib import display  # noqa: E402
+from Xlib.display import Display  # noqa: E402
+from Xlib.ext import randr  # noqa: E402
 from PyQt5 import QtCore, QtWidgets, QtGui  # noqa: E402
 from PyQt5.QtCore import Qt  # noqa: E402
 from pathlib import Path  # noqa: E402
 
-root = display.Display().screen().root
+display = Display()
+root = display.screen().root
 pointer = root.query_pointer()
 
 
@@ -37,8 +39,22 @@ def get_frame(client):
     return client if parent.id == root.id else get_frame(parent)
 
 
-active = display.Display().get_input_focus().focus
+active = display.get_input_focus().focus
 geometry = get_frame(active).get_geometry()
+if geometry.x < 0 or geometry.y < 0:
+    resources = randr.get_screen_resources(active)
+    timestamp = resources.config_timestamp
+    for output in resources.outputs:
+        params = display.xrandr_get_output_info(output, timestamp)
+        if not params.crtc:
+            continue
+        crtc = display.xrandr_get_crtc_info(params.crtc, timestamp)
+        x, y, w, h = crtc.x, crtc.y, crtc.width, crtc.height
+        if x <= pointer.root_x < x + w and y <= pointer.root_y < y + h:
+            geometry = crtc
+            break
+    else:
+        geometry = root.get_geometry()
 
 FLAGS = Qt.WindowStaysOnTopHint | Qt.SplashScreen | Qt.FramelessWindowHint  # type: ignore
 ORIGIN = QtCore.QPointF(0, 0)
